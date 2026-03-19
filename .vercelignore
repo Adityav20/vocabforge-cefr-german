@@ -1,0 +1,8 @@
+source
+tests
+docs
+scripts
+uploads
+generated
+.nltk_data
+app_data.sqlite3
