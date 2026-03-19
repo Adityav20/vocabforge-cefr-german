@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+IS_VERCEL = bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
 
 
 def _env_int(name: str, default: int) -> int:
@@ -41,6 +42,7 @@ class Settings:
     environment: str
     base_dir: Path
     data_dir: Path
+    runtime_dir: Path
     upload_dir: Path
     generated_dir: Path
     database_path: Path
@@ -62,18 +64,20 @@ class Settings:
 
     @property
     def cefr_cache_path(self) -> Path:
-        return self.data_dir / "cefr_level_cache.json"
+        return self.runtime_dir / "cefr_level_cache.json"
 
     @classmethod
     def from_env(cls) -> "Settings":
+        runtime_dir = Path("/tmp/ger_translator") if IS_VERCEL else BASE_DIR
         return cls(
             app_name=os.getenv("APP_NAME", "Ger Translator"),
             environment=os.getenv("APP_ENV", "development"),
             base_dir=BASE_DIR,
             data_dir=BASE_DIR / "data",
-            upload_dir=BASE_DIR / "uploads",
-            generated_dir=BASE_DIR / "generated",
-            database_path=BASE_DIR / "app_data.sqlite3",
+            runtime_dir=runtime_dir,
+            upload_dir=runtime_dir / "uploads",
+            generated_dir=runtime_dir / "generated",
+            database_path=runtime_dir / "app_data.sqlite3",
             max_upload_size_mb=_env_int("MAX_UPLOAD_SIZE_MB", 20),
             deepl_api_key=os.getenv("DEEPL_API_KEY"),
             deepl_api_url=os.getenv(
@@ -90,7 +94,7 @@ class Settings:
         )
 
     def ensure_directories(self) -> None:
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.generated_dir.mkdir(parents=True, exist_ok=True)
 
