@@ -1,0 +1,12 @@
+fastapi==0.135.1
+uvicorn==0.42.0
+python-multipart==0.0.22
+python-docx==1.2.0
+python-pptx==1.0.2
+reportlab==4.4.10
+PyPDF2==3.0.1
+langdetect==1.0.9
+spacy==3.8.11
+httpx==0.28.1
+wordfreq==3.1.1
+de-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl

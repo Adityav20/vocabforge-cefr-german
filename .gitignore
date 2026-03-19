@@ -1,0 +1,12 @@
+.venv/
+.nltk_data/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.pyc
+uploads/*
+generated/*
+!uploads/.gitkeep
+!generated/.gitkeep
+*.sqlite3
+tests/*.docx

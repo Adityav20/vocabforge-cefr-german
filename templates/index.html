@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <div class="ambient ambient-one"></div>
+      <div class="ambient ambient-two"></div>
+
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">German Document Intelligence</p>
+          <h1 class="brand-title">{{ app_name }}</h1>
+        </div>
+        <button id="themeToggle" class="ghost-button" type="button" aria-label="Toggle theme">
+          Toggle Theme
+        </button>
+      </header>
+
+      <main class="layout">
+        <section class="hero panel">
+          <div class="hero-copy">
+            <p class="eyebrow">Premium Vocabulary Extraction</p>
+            <h2>Turn German documents into level-specific learning material.</h2>
+            <p class="hero-text">
+              Upload PDF, Word, or PowerPoint files, choose your CEFR level, and receive a
+              structured vocabulary pack with curated translations and a printable PDF.
+            </p>
+            <div class="feature-row">
+              <article class="feature-card">
+                <span class="feature-value">A1-C2</span>
+                <span class="feature-label">CEFR filtering</span>
+              </article>
+              <article class="feature-card">
+                <span class="feature-value">PDF / DOCX / PPTX</span>
+                <span class="feature-label">Real-world formats</span>
+              </article>
+              <article class="feature-card">
+                <span class="feature-value">PDF + CSV</span>
+                <span class="feature-label">Export-ready output</span>
+              </article>
+            </div>
+          </div>
+
+          <div class="hero-rail">
+            <div class="rail-card">
+              <span class="rail-kicker">Pipeline</span>
+              <ol class="rail-list">
+                <li>Extract text from uploaded documents</li>
+                <li>Detect German and analyze vocabulary</li>
+                <li>Map entries to CEFR levels</li>
+                <li>Build a polished learning pack</li>
+              </ol>
+            </div>
+            <div class="rail-card subtle">
+              <span class="rail-kicker">Academic Feel</span>
+              <p>
+                Designed for learners, researchers, and students who need reliable output,
+                clean structure, and a repeatable workflow.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace">
+          <section class="panel form-panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Start A Job</p>
+                <h3>Upload a German source document</h3>
+              </div>
+              <span class="meta-pill">Max {{ max_upload_size_mb }} MB</span>
+            </div>
+
+            <form id="uploadForm" class="upload-form">
+              <label id="dropzone" class="dropzone" for="fileInput">
+                <input id="fileInput" type="file" accept=".pdf,.docx,.pptx" hidden />
+                <span class="dropzone-icon">+</span>
+                <span class="dropzone-title">Drag and drop a file, or browse</span>
+                <span class="dropzone-copy">Supported formats: PDF, DOCX, PPTX</span>
+                <span id="fileName" class="file-chip">No file selected</span>
+              </label>
+
+              <div class="form-grid">
+                <label class="field">
+                  <span class="field-label">Target level</span>
+                  <select id="levelSelect" name="level">
+                    <option value="A1">A1</option>
+                    <option value="A2">A2</option>
+                    <option value="B1" selected>B1</option>
+                    <option value="B2">B2</option>
+                    <option value="C1">C1</option>
+                    <option value="C2">C2</option>
+                  </select>
+                </label>
+
+                <button id="submitButton" class="primary-button" type="submit">
+                  Generate Vocabulary
+                </button>
+              </div>
+            </form>
+
+            <div id="errorBanner" class="error-banner hidden" role="alert"></div>
+
+            <section class="progress-shell">
+              <div class="progress-head">
+                <div>
+                  <span id="statusBadge" class="status-badge idle">Idle</span>
+                  <h4 id="currentTitle">Waiting for a document</h4>
+                </div>
+                <span id="progressValue" class="progress-value">0%</span>
+              </div>
+              <div class="progress-track">
+                <div id="progressFill" class="progress-fill"></div>
+              </div>
+              <p id="stageText" class="stage-text">Upload a document to begin processing.</p>
+              <p id="detailText" class="detail-text">
+                The app will extract text, classify vocabulary, and prepare your export files.
+              </p>
+            </section>
+          </section>
+
+          <aside class="panel result-panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Preview</p>
+                <h3>Learning Pack</h3>
+              </div>
+              <div class="button-row">
+                <a id="downloadPdf" class="secondary-button disabled" href="#" aria-disabled="true">Download PDF</a>
+                <a id="downloadCsv" class="secondary-button disabled" href="#" aria-disabled="true">CSV</a>
+              </div>
+            </div>
+
+            <div id="summaryStats" class="summary-grid">
+              <article class="stat-card">
+                <span class="stat-value">0</span>
+                <span class="stat-label">Entries</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-value">-</span>
+                <span class="stat-label">Level Mix</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-value">-</span>
+                <span class="stat-label">Translation</span>
+              </article>
+            </div>
+
+            <ul id="notesList" class="notes-list">
+              <li>Upload a document to generate a structured preview.</li>
+            </ul>
+
+            <div id="previewSections" class="preview-sections empty-state">
+              <div class="empty-card">
+                <span class="empty-kicker">No output yet</span>
+                <p>
+                  Once processing finishes, your nouns, verbs, adjectives, adverbs, prepositions,
+                  and phrases will appear here.
+                </p>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="panel history-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Recent Work</p>
+              <h3>Upload History</h3>
+            </div>
+            <button id="refreshHistory" class="ghost-button" type="button">Refresh</button>
+          </div>
+          <div id="historyList" class="history-list">
+            <article class="history-empty">No jobs yet. Your recent exports will appear here.</article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/js/app.js" defer></script>
+  </body>
+</html>
+

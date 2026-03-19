@@ -1,0 +1,2 @@
+"""Ger Translator application package."""
+
