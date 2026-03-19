@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -10,12 +11,19 @@ from typing import Any
 
 import spacy
 
+from app.services.cefr_service import CEFRLevelService
+from app.services.noun_metadata_service import NounMetadataService
 from app.services.translation_service import TranslationService
 
 try:
     from wordfreq import zipf_frequency
 except ImportError:  # pragma: no cover - optional dependency fallback
     zipf_frequency = None
+
+try:
+    import simplemma
+except ImportError:  # pragma: no cover - optional dependency fallback
+    simplemma = None
 
 
 LEVEL_ORDER = {"A1": 1, "A2": 2, "B1": 3, "B2": 4, "C1": 5, "C2": 6}
@@ -126,10 +134,19 @@ class LexiconEntry:
 
 
 class VocabularyService:
-    def __init__(self, *, data_path: Path, translation_service: TranslationService) -> None:
+    def __init__(
+        self,
+        *,
+        data_path: Path,
+        translation_service: TranslationService,
+        cefr_service: CEFRLevelService | None = None,
+    ) -> None:
         self.translation_service = translation_service
-        self.lexicon = self._load_lexicon(data_path)
+        self.cefr_service = cefr_service
+        self.noun_metadata_service = NounMetadataService()
+        self.lexicon = [self._normalize_lexicon_entry(entry) for entry in self._load_lexicon(data_path)]
         self.trusted_seed_categories = self._load_trusted_seed_categories(data_path.parent / "cefr_vocabulary_seed.csv")
+        self.translation_candidates = self._load_translation_candidates(data_path.parent / "translation_candidates.json")
         self.glossary = self._build_glossary()
         self.phrase_entries = [entry for entry in self.lexicon if entry.category == "phrases"]
         self.entry_index = self._build_entry_index()
@@ -157,7 +174,11 @@ class VocabularyService:
 
         if self._has_full_spacy_pipeline():
             doc = self.nlp(prepared_text)
-            self._extract_token_entries(doc, selected_rank, sections)
+            try:
+                cefr_hints = self.cefr_service.lookup_levels(self._collect_cefr_candidates(doc)) if self.cefr_service else {}
+            except Exception:
+                cefr_hints = {}
+            self._extract_token_entries(doc, selected_rank, sections, cefr_hints)
         else:
             self._extract_with_regex(prepared_text, selected_rank, sections)
 
@@ -177,6 +198,7 @@ class VocabularyService:
                 translation = resolved.get(f"{category}:{key}")
                 if translation:
                     entry["translation"] = translation
+                entry["translation"] = self._resolve_display_translation(entry)
                 if not entry.get("translation"):
                     del group[key]
 
@@ -248,7 +270,14 @@ class VocabularyService:
                 ),
             )
 
-    def _extract_token_entries(self, doc, selected_rank: int, sections: dict[str, dict[str, dict[str, Any]]]) -> None:
+    def _extract_token_entries(
+        self,
+        doc,
+        selected_rank: int,
+        sections: dict[str, dict[str, dict[str, Any]]],
+        cefr_hints: dict[tuple[str, str], str] | None = None,
+    ) -> None:
+        cefr_hints = cefr_hints or {}
         for token in doc:
             if token.is_space or token.is_punct or token.like_num:
                 continue
@@ -257,7 +286,10 @@ class VocabularyService:
                 continue
             if category == "nouns" and token.pos_ == "PROPN":
                 continue
-            lemma = self._normalize_lemma(token.lemma_ or token.text, category)
+            lemma = self._derive_lemma(token, category)
+            article = None
+            if category == "nouns":
+                lemma, article = self._resolve_noun_metadata(lemma, token.text)
 
             matched_entry = self._match_entry(category, lemma, token.text)
             example = token.sent.text.strip() if token.sent is not None else None
@@ -271,27 +303,29 @@ class VocabularyService:
                 continue
 
             if matched_entry:
-                if LEVEL_ORDER[matched_entry.cefr_level] > selected_rank:
+                effective_level = self._lookup_cefr_level(cefr_hints, matched_entry.category, matched_entry.lemma) or matched_entry.cefr_level
+                if LEVEL_ORDER[effective_level] > selected_rank:
                     continue
+                payload = self._payload_from_entry(
+                    matched_entry,
+                    occurrences=1,
+                    example=example,
+                )
+                payload["cefr_level"] = effective_level
                 self._upsert_entry(
                     sections[matched_entry.category],
                     key=matched_entry.lemma.lower(),
-                    payload=self._payload_from_entry(
-                        matched_entry,
-                        occurrences=1,
-                        example=example,
-                    ),
+                    payload=payload,
                 )
                 continue
 
             if not self._should_keep_token(lemma, category):
                 continue
 
-            estimated_level = self._estimate_level(lemma, category, frequency_hint=1)
+            estimated_level = self._lookup_cefr_level(cefr_hints, category, lemma) or self._estimate_level(lemma, category, frequency_hint=1)
             if LEVEL_ORDER[estimated_level] > selected_rank:
                 continue
 
-            article = self._guess_article(lemma) if category == "nouns" else None
             term = f"{article} {lemma}" if article else lemma
             key = lemma.lower()
             self._upsert_entry(
@@ -308,6 +342,27 @@ class VocabularyService:
                     "example": example,
                 },
             )
+
+    def _collect_cefr_candidates(self, doc) -> list[tuple[str, str]]:
+        seen: set[tuple[str, str]] = set()
+        candidates: list[tuple[str, str]] = []
+        for token in doc:
+            if token.is_space or token.is_punct or token.like_num:
+                continue
+            category = POS_CATEGORY_MAP.get(token.pos_)
+            if not category:
+                continue
+            lemma = self._derive_lemma(token, category)
+            if category == "nouns":
+                lemma, _ = self._resolve_noun_metadata(lemma, token.text)
+            if not self._should_keep_token(lemma, category) or " " in lemma:
+                continue
+            key = (category, lemma.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append((category, lemma))
+        return candidates
 
     def _extract_with_regex(self, text: str, selected_rank: int, sections: dict[str, dict[str, dict[str, Any]]]) -> None:
         for raw_token in re.findall(r"[A-Za-zÄÖÜäöüß-]{3,}", text):
@@ -330,7 +385,7 @@ class VocabularyService:
             )
 
     def _match_entry(self, category: str | None, lemma: str, surface: str) -> LexiconEntry | None:
-        search_keys = [lemma.lower(), surface.lower(), surface.casefold(), lemma.casefold()]
+        search_keys = self._entry_search_keys(lemma, surface)
         categories = (category,) if category else CATEGORY_ORDER
         for candidate_category in categories:
             if candidate_category is None:
@@ -345,6 +400,20 @@ class VocabularyService:
                 if entry and entry.category == category:
                     return entry
         return None
+
+    def _entry_search_keys(self, lemma: str, surface: str) -> list[str]:
+        search_keys: list[str] = []
+        for candidate in (lemma, surface):
+            if not candidate:
+                continue
+            for variant in self._orthography_variants(candidate):
+                lowered = variant.lower()
+                casefolded = variant.casefold()
+                if lowered not in search_keys:
+                    search_keys.append(lowered)
+                if casefolded not in search_keys:
+                    search_keys.append(casefolded)
+        return search_keys
 
     @staticmethod
     def _upsert_entry(group: dict[str, dict[str, Any]], *, key: str, payload: dict[str, Any]) -> None:
@@ -362,6 +431,49 @@ class VocabularyService:
         if category == "nouns":
             return cleaned.capitalize()
         return cleaned.lower()
+
+    def _derive_lemma(self, token, category: str) -> str:
+        normalized = self._normalize_lemma(token.lemma_ or token.text, category)
+        if simplemma is None or category not in {"nouns", "verbs", "adjectives", "adverbs"}:
+            return normalized
+
+        try:
+            fallback = simplemma.lemmatize(token.text, lang="de")
+        except Exception:  # pragma: no cover - external library guard
+            fallback = token.text
+
+        fallback_normalized = self._normalize_lemma(fallback or token.text, category)
+        if not fallback_normalized:
+            return normalized
+        if category == "verbs" and fallback_normalized != normalized:
+            return fallback_normalized
+        if category == "nouns" and fallback_normalized != normalized and token.text[:1].isupper():
+            return fallback_normalized
+        if category in {"adjectives", "adverbs"} and len(fallback_normalized) >= len(normalized):
+            return fallback_normalized
+        return normalized
+
+    def _resolve_noun_metadata(self, lemma: str, surface: str | None = None) -> tuple[str, str]:
+        for candidate in (lemma, surface or ""):
+            if not candidate:
+                continue
+            resolved = self.noun_metadata_service.lookup(candidate)
+            if resolved:
+                return resolved
+        normalized = self._normalize_lemma(lemma, "nouns")
+        return normalized, self._guess_article(normalized)
+
+    def _lookup_cefr_level(
+        self,
+        cefr_hints: dict[tuple[str, str], str],
+        category: str,
+        lemma: str,
+    ) -> str | None:
+        for variant in self._orthography_variants(lemma):
+            level = cefr_hints.get((category, variant.casefold()))
+            if level:
+                return level
+        return None
 
     def _should_keep_token(self, lemma: str, category: str) -> bool:
         if not lemma or len(lemma) < 3:
@@ -528,6 +640,24 @@ class VocabularyService:
         return "die" if lower_noun.endswith("e") else "der"
 
     @staticmethod
+    def _orthography_variants(term: str) -> tuple[str, ...]:
+        variants: list[str] = []
+        if term:
+            variants.append(term)
+        if "ß" in term:
+            variants.append(term.replace("ß", "ss"))
+        if "ss" in term:
+            variants.append(term.replace("ss", "ß"))
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for variant in variants:
+            if variant in seen:
+                continue
+            seen.add(variant)
+            deduped.append(variant)
+        return tuple(deduped)
+
+    @staticmethod
     def _snippet(text: str, start: int, end: int) -> str:
         before = max(0, start - 40)
         after = min(len(text), end + 40)
@@ -589,6 +719,26 @@ class VocabularyService:
                     glossary[alias.lower()] = entry.translation
         return glossary
 
+    def _normalize_lexicon_entry(self, entry: LexiconEntry) -> LexiconEntry:
+        if entry.category != "nouns":
+            return entry
+
+        lemma, article = self._resolve_noun_metadata(entry.lemma, entry.term)
+        aliases = list(entry.aliases)
+        for alias_candidate in (entry.term, entry.lemma):
+            if alias_candidate and alias_candidate.casefold() not in {alias.casefold() for alias in aliases}:
+                aliases.append(alias_candidate)
+
+        return LexiconEntry(
+            cefr_level=entry.cefr_level,
+            category=entry.category,
+            lemma=lemma,
+            term=f"{article} {lemma}",
+            translation=entry.translation,
+            article=article,
+            aliases=tuple(aliases),
+        )
+
     @staticmethod
     def _load_lexicon(data_path: Path) -> list[LexiconEntry]:
         with data_path.open("r", encoding="utf-8", newline="") as handle:
@@ -619,6 +769,74 @@ class VocabularyService:
                 if lemma and category:
                     trusted_categories[lemma.casefold()].add(category)
         return trusted_categories
+
+    @staticmethod
+    def _load_translation_candidates(path: Path) -> dict[str, list[str]]:
+        if not path.exists():
+            return {}
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+        return {
+            key: [value for value in values if value]
+            for key, values in raw.items()
+            if isinstance(values, list)
+        }
+
+    def _resolve_display_translation(self, entry: dict[str, Any]) -> str:
+        current = (entry.get("translation") or "").strip()
+        candidates = self._translation_candidates_for(entry["category"], entry["lemma"])
+        if not candidates:
+            return current
+
+        deduped_candidates: list[str] = []
+        seen = set()
+        for candidate in candidates:
+            normalized = candidate.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped_candidates.append(candidate)
+
+        if not deduped_candidates:
+            return current
+
+        candidate_keys = {candidate.casefold() for candidate in deduped_candidates}
+        if current and current.casefold() in candidate_keys:
+            return current
+
+        if len(deduped_candidates) == 1:
+            return deduped_candidates[0]
+
+        if self._should_surface_candidates(entry, current, deduped_candidates):
+            return "; ".join(deduped_candidates[:4])
+
+        if entry["category"] in {"nouns", "adjectives", "adverbs", "prepositions"} and current.casefold() not in candidate_keys:
+            return deduped_candidates[0]
+
+        return current or deduped_candidates[0]
+
+    def _translation_candidates_for(self, category: str, lemma: str) -> list[str]:
+        candidates: list[str] = []
+        for variant in self._orthography_variants(lemma):
+            key = f"{category}:{variant.casefold()}"
+            candidates.extend(self.translation_candidates.get(key, []))
+        return candidates
+
+    def _should_surface_candidates(
+        self,
+        entry: dict[str, Any],
+        current: str,
+        candidates: list[str],
+    ) -> bool:
+        if len(candidates) <= 1:
+            return False
+        if not current:
+            return entry["category"] == "verbs"
+        if current.casefold() not in {candidate.casefold() for candidate in candidates}:
+            return entry["category"] == "verbs"
+        if entry["category"] == "verbs" and not current.casefold().startswith("to "):
+            return True
+        return False
 
     @staticmethod
     def _load_nlp():

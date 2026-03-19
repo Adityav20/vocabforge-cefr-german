@@ -8,5 +8,8 @@ PyPDF2==3.0.1
 langdetect==1.0.9
 spacy==3.8.11
 httpx==0.28.1
+requests==2.32.5
 wordfreq==3.1.1
+simplemma==1.1.2
+german-nouns==1.2.5
 de-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl

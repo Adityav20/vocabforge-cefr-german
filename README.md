@@ -7,9 +7,10 @@ Ger Translator is a premium web application for extracting structured German voc
 - Uploads PDF, DOCX, and PPTX files
 - Extracts text from multi-page documents and slide decks
 - Detects whether a document is sufficiently German
-- Uses a German spaCy pipeline plus a curated CEFR lexicon to structure vocabulary
+- Uses a German spaCy pipeline plus a curated CEFR lexicon, with DAFlex-based CEFR correction when available
 - Groups output into nouns, verbs, adjectives, adverbs, prepositions, and phrases
 - Adds English translations from an offline glossary, with optional DeepL enrichment
+- Corrects noun articles with a Wiktionary-derived noun dataset
 - Generates a polished A4 PDF and a CSV companion export
 - Tracks recent processing jobs with progress states and downloadable history
 
@@ -17,7 +18,7 @@ Ger Translator is a premium web application for extracting structured German voc
 
 - Backend: FastAPI
 - Frontend: Server-rendered HTML, CSS, and vanilla JavaScript
-- NLP: `spaCy` with `de_core_news_sm`, plus curated CEFR vocabulary data and fallback heuristics
+- NLP: `spaCy` with `de_core_news_sm`, curated CEFR vocabulary data, official DAFlex CEFR lookup, and noun metadata from `german-nouns`
 - File parsing:
 - PDF: `PyPDF2`
 - DOCX: `python-docx`
@@ -93,18 +94,23 @@ uvicorn app.main:app --reload
 - the curated seed rows
 - German frequency data
 - the official FreeDict German-English dictionary
+- Runtime CEFR correction now prefers [DAFlex](https://cental.uclouvain.be/cefrlex/daflex/), the official German resource from the CEFRLex project
+- DAFlex results are cached locally in `data/cefr_level_cache.json`
+- Runtime noun article correction uses `german-nouns`, an open-source German noun dataset compiled from Wiktionary
+- Ambiguity support is generated into [data/translation_candidates.json](/Users/adi/Documents/Projects/Ger_Translator/data/translation_candidates.json) by [scripts/build_translation_candidates.py](/Users/adi/Documents/Projects/Ger_Translator/scripts/build_translation_candidates.py)
 - The data is organized by CEFR level, category, lemma, display term, translation, article, and optional aliases
 
 ## NLP Notes
 
 - Primary analysis uses `spaCy` with the `de_core_news_sm` model for tokenization, POS tagging, and lemmatization
-- Phrase extraction and CEFR assignment are reinforced by the bundled CEFR lexicon
+- Phrase extraction and CEFR assignment are reinforced by the bundled CEFR lexicon and optional DAFlex lookups
 - If spaCy is unavailable in a target environment, the app falls back to lexicon and regex-based extraction
 
 ## Translation Notes
 
 - Offline mode uses the bundled glossary derived from the CEFR dataset
 - If `DEEPL_API_KEY` is set, unresolved entries can be sent to DeepL for broader English translation coverage
+- Verb ambiguities can surface multiple translations, but the UI no longer prefixes them with `Possible meanings`
 
 ## Running Tests
 

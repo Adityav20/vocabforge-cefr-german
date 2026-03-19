@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from app.api.routes import router as api_router
 from app.core.config import settings
 from app.repositories.job_repository import JobRepository
+from app.services.cefr_service import CEFRLevelService
 from app.services.document_parser import DocumentParserService
 from app.services.export_service import ExportService
 from app.services.job_service import JobService
@@ -28,9 +29,11 @@ def create_app() -> FastAPI:
     templates = Jinja2Templates(directory=str(settings.base_dir / "templates"))
     repository = JobRepository(settings.database_path)
     translation_service = TranslationService(settings)
+    cefr_service = CEFRLevelService(settings)
     vocabulary_service = VocabularyService(
         data_path=settings.data_dir / "cefr_vocabulary.csv",
         translation_service=translation_service,
+        cefr_service=cefr_service,
     )
     job_service = JobService(
         settings=settings,

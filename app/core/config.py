@@ -18,6 +18,23 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() not in {"0", "false", "no", "off"}
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str
@@ -30,6 +47,9 @@ class Settings:
     max_upload_size_mb: int
     deepl_api_key: str | None
     deepl_api_url: str
+    cefr_api_enabled: bool
+    cefr_api_url: str
+    cefr_api_timeout_seconds: float
     history_limit: int
 
     @property
@@ -39,6 +59,10 @@ class Settings:
     @property
     def supported_extensions(self) -> set[str]:
         return {".pdf", ".docx", ".pptx"}
+
+    @property
+    def cefr_cache_path(self) -> Path:
+        return self.data_dir / "cefr_level_cache.json"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -56,6 +80,12 @@ class Settings:
                 "DEEPL_API_URL",
                 "https://api-free.deepl.com/v2/translate",
             ),
+            cefr_api_enabled=_env_bool("CEFR_API_ENABLED", True),
+            cefr_api_url=os.getenv(
+                "CEFR_API_URL",
+                "https://cental.uclouvain.be/cefrlex/daflex/analyse/",
+            ),
+            cefr_api_timeout_seconds=_env_float("CEFR_API_TIMEOUT_SECONDS", 12.0),
             history_limit=_env_int("HISTORY_LIMIT", 8),
         )
 
@@ -67,4 +97,3 @@ class Settings:
 
 settings = Settings.from_env()
 settings.ensure_directories()
-

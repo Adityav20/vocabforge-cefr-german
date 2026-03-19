@@ -9,6 +9,21 @@ from app.services.translation_service import TranslationService
 from app.services.vocabulary_service import VocabularyService
 
 
+class StubCEFRService:
+    def __init__(self, mapping: dict[tuple[str, str], str] | None = None) -> None:
+        self.mapping = mapping or {}
+
+    def lookup_levels(self, candidates: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
+        resolved: dict[tuple[str, str], str] = {}
+        for category, lemma in candidates:
+            for variant in {lemma.casefold(), lemma.casefold().replace("ß", "ss"), lemma.casefold().replace("ss", "ß")}:
+                level = self.mapping.get((category, variant))
+                if level:
+                    resolved[(category, lemma.casefold())] = level
+                    break
+        return resolved
+
+
 class LanguageAndVocabularyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -16,6 +31,16 @@ class LanguageAndVocabularyTests(unittest.TestCase):
         cls.vocabulary_service = VocabularyService(
             data_path=Path(settings.data_dir / "cefr_vocabulary.csv"),
             translation_service=TranslationService(settings),
+            cefr_service=StubCEFRService(
+                {
+                    ("nouns", "auge"): "A1",
+                    ("nouns", "auto"): "A1",
+                    ("nouns", "kind"): "A1",
+                    ("nouns", "schloss"): "A1",
+                    ("verbs", "schließen"): "A1",
+                    ("verbs", "schliessen"): "A1",
+                }
+            ),
         )
 
     def test_detects_german_text(self) -> None:
@@ -73,6 +98,36 @@ class LanguageAndVocabularyTests(unittest.TestCase):
         self.assertNotIn("short", all_terms)
         self.assertNotIn("she", all_terms)
         self.assertNotIn("after", all_terms)
+
+    def test_ambiguous_inflected_verb_surfaces_multiple_meanings_without_prefix(self) -> None:
+        result = self.vocabulary_service.analyze(
+            text="Ich schloss meine Augen.",
+            selected_level="B2",
+            document_name="sample.pdf",
+            language_warning=None,
+            document_units=1,
+            source_type="PDF",
+        )
+        verb_translations = " ".join(entry["translation"] for entry in result["sections"]["verbs"]).casefold()
+        self.assertIn("to close", verb_translations)
+        self.assertIn("to lock", verb_translations)
+        self.assertNotIn("possible meanings", verb_translations)
+        self.assertNotIn("palace", verb_translations)
+
+    def test_corrects_articles_and_cefr_for_common_nouns(self) -> None:
+        result = self.vocabulary_service.analyze(
+            text="Das Auge sieht das Schloss. Das Kind repariert das Auto.",
+            selected_level="A1",
+            document_name="sample.pdf",
+            language_warning=None,
+            document_units=1,
+            source_type="PDF",
+        )
+        nouns = {entry["term"] for entry in result["sections"]["nouns"]}
+        self.assertIn("das Auge", nouns)
+        self.assertIn("das Schloss", nouns)
+        self.assertIn("das Kind", nouns)
+        self.assertIn("das Auto", nouns)
 
 
 if __name__ == "__main__":
